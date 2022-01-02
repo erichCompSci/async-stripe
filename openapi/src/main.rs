@@ -596,7 +596,7 @@ fn gen_list_member_variable(out: &mut String,
     {
         Ok(type_) => { write_out_field(out, &element_field_name, &format!("List<{}", type_), required); },
         Err(TypeError::AnyOf) => {
-            gen_any_of_fields(out, &element["anyOf"], &element_field_name, state, required, Some("List<".into()));
+            gen_any_of_fields(out, &element["anyOf"], &element_field_name, rust_class_type, state, required, Some("List<".into()));
         },
         Err(TypeError::IsObject) => {
             gen_object_field(out, &element, &element_field_name, rust_class_type, None, Some("List<".into()), state, required);
@@ -643,6 +643,7 @@ fn gen_object_field(out: &mut String,
 fn gen_any_of_fields(out: &mut String, 
                     anyof_schema: &Json, 
                     field_prefix: &str, 
+                    rust_class_type: &str,
                     state : &mut Generated,
                     required: bool,
                     wrapped_val: Option<String>) -> (Vec<String>, Vec<String>)
@@ -666,31 +667,24 @@ fn gen_any_of_fields(out: &mut String,
         for (index, val) in inner_vec.iter().enumerate() {
             let new_member_name = format!("{}{}", field_prefix, index);
             let new_member_type: String;
+            out.push_str(&format!(
+                "    #[serde(rename = \"{}\")]\n",
+                field_prefix 
+            ));
             match gen_member_variable_string(val) {
                 Ok(normal_type) => { new_member_type = normal_type; }, 
                 Err(TypeError::IsObject) => {
-                    if let Some(title) = val["title"].as_str() {
-                        new_member_type = title.to_camel_case();
-                    } else {
-                        new_member_type = new_member_name.to_camel_case();
-                    }
-                    let inferred_object = InferredObject {
-                        rust_type: new_member_type.clone(),
-                        schema: val.clone(),
-                    };
-                    state
-                        .generated_objects
-                        .insert(new_member_type.clone(), inferred_object);
+                    new_member_type = gen_object_field(out, &val, new_member_name, rust_class_type, None, None, state, required);
                 },
+                Err(TypeError::IsArray) => {
+                    unimplemented!();
+
+                }
                 _ => {
                     new_member_type = "".into();
                     assert!(false, "Unexpected type for schema: {:#?}", val);
                 },
             };
-            out.push_str(&format!(
-                "    #[serde(rename = \"{}\")]\n",
-                field_prefix 
-            ));
             let final_type : String;
             if let Some(ref wrapper) = wrapped_val
             {
@@ -790,7 +784,7 @@ fn gen_inferred_params(
                         }
                         Err(TypeError::AnyOf) => {
                             println!("member_schema: {:#?}", member_schema);
-                            let (new_member_names, new_member_types) = gen_any_of_fields(out, &member_schema["anyOf"], "card", state, required, None);
+                            let (new_member_names, new_member_types) = gen_any_of_fields(out, &member_schema["anyOf"], "card", &params.rust_type, state, required, None);
                             for (index, name) in new_member_names.iter().enumerate() {
                                 initializers.push((name.clone(), new_member_types[index].clone(), required));
                             }
@@ -1613,6 +1607,7 @@ fn gen_field(
             gen_any_of_fields(&mut out,
                              &field["anyOf"],
                              field_name,
+                             object,
                              state,
                              required, None);
         }
