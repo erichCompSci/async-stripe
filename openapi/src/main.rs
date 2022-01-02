@@ -424,16 +424,25 @@ fn gen_struct(
             false
         };
         out.push('\n');
-        out.push_str(&gen_field(
-            state,
-            meta,
-            object,
-            &key,
-            &field,
-            required && !force_optional,
-            false,
-            shared_objects,
-        ));
+        match gen_member_variable_string(&field)
+        {
+            Err(TypeError::IsList) => {
+                gen_list_member_variable(out, &key, &struct_name, &field, state, required);
+            },
+            _ => 
+            {
+                out.push_str(&gen_field(
+                    state,
+                    meta,
+                    object,
+                    &key,
+                    &field,
+                    required && !force_optional,
+                    false,
+                    shared_objects,
+                ));
+            }
+        }
     }
     out.push_str("}\n");
 }
@@ -543,13 +552,172 @@ fn gen_generated_schemas(
     }
 }
 
+fn correct_carrots(var_type: &String) -> String
+{
+    let num_of_carrots = var_type.matches("<").count();
+    let num_right_carrots = var_type.matches(">").count();
+    if num_of_carrots > num_right_carrots 
+    {
+        return format!("{}{}", var_type, std::iter::repeat(">").take(num_of_carrots - num_right_carrots).collect::<String>());
+    }
+    var_type.clone()
+}
+
 fn write_out_field(out: &mut String, var_name: &String, var_type: &String, required: bool) {
+
+    let var_type = correct_carrots(&var_type);
+
     if required {
         out.push_str(&format!("    pub {}: {},\n", var_name, var_type));
     } else {
         out.push_str("    #[serde(skip_serializing_if = \"Option::is_none\")]\n");
         out.push_str(&format!("    pub {}: Option<{}>,\n", var_name, var_type));
     }
+}
+
+fn gen_list_member_variable(out: &mut String, 
+                            field_prefix: &str, 
+                            rust_class_type: &str,
+                            list_schema: &Json,
+                            state: &mut Generated,
+                            required: bool)
+{
+    state.use_params.insert("List");
+    let element = list_schema["properties"]["data"]["items"].clone();
+    let element_field_name = if field_prefix.ends_with('s') {
+        field_prefix[0..field_prefix.len() - 1].into()
+    } else if field_prefix.ends_with("ies") {
+        format!("{}y", &field_prefix[0..field_prefix.len() - 3])
+    } else {
+        field_prefix.into()
+    };
+
+    match gen_member_variable_string(&element)
+    {
+        Ok(type_) => { write_out_field(out, &element_field_name, &format!("List<{}", type_), required); },
+        Err(TypeError::AnyOf) => {
+            gen_any_of_fields(out, &element["anyOf"], &element_field_name, state, required, Some("List<".into()));
+        },
+        Err(TypeError::IsObject) => {
+            gen_object_field(out, &element, &element_field_name, rust_class_type, None, Some("List<".into()), state, required);
+        },
+        _ => { panic!("Don't handle all the cases!: {}", element); },
+    }
+
+}
+
+fn gen_object_field(out: &mut String,
+                    member_schema: &Json, 
+                    field_name: &str, 
+                    rust_class_type: &str, 
+                    rust_class_suffix: Option<String>,
+                    wrapped_val: Option<String>,
+                    state: &mut Generated, 
+                    required: bool) -> String
+{
+    let mut new_type_name: String;
+    if let Some(title) = member_schema["title"].as_str() {
+        new_type_name = title.to_string().to_camel_case();
+    } else if let Some(suffix) = rust_class_suffix {
+        new_type_name = format!("{}{}", rust_class_type, suffix);
+    } else {
+        new_type_name = format!("{}{}", rust_class_type, field_name.to_camel_case());
+    }
+
+    if let Some(wrapped) = wrapped_val {
+        new_type_name = format!("{}{}", wrapped, new_type_name);
+    }
+
+
+    let inferred_object = InferredObject {
+        rust_type: new_type_name.clone(),
+        schema: member_schema.clone(),
+    };
+    state.generated_objects.insert(new_type_name.clone(), inferred_object);
+    write_out_field(out, &field_name.into(), &new_type_name, required);
+
+    new_type_name
+}
+
+
+fn gen_any_of_fields(out: &mut String, 
+                    anyof_schema: &Json, 
+                    field_prefix: &str, 
+                    state : &mut Generated,
+                    required: bool,
+                    wrapped_val: Option<String>) -> (Vec<String>, Vec<String>)
+{
+    let mut new_member_names = vec!();
+    let mut new_member_types = vec!();
+
+    //False any of field, not sure why this is the case, but just ignore it
+    if field_prefix == "metadata"
+    {
+        write_out_field(
+            out,
+            &"metadata".into(),
+            &"Metadata".into(),
+            false,
+        );
+        return (new_member_names, new_member_types);
+    }
+
+    if let Some(inner_vec) = anyof_schema.as_array() {
+        for (index, val) in inner_vec.iter().enumerate() {
+            let new_member_name = format!("{}{}", field_prefix, index);
+            let new_member_type: String;
+            match gen_member_variable_string(val) {
+                Ok(normal_type) => { new_member_type = normal_type; }, 
+                Err(TypeError::IsObject) => {
+                    if let Some(title) = val["title"].as_str() {
+                        new_member_type = title.to_camel_case();
+                    } else {
+                        new_member_type = new_member_name.to_camel_case();
+                    }
+                    let inferred_object = InferredObject {
+                        rust_type: new_member_type.clone(),
+                        schema: val.clone(),
+                    };
+                    state
+                        .generated_objects
+                        .insert(new_member_type.clone(), inferred_object);
+                },
+                _ => {
+                    new_member_type = "".into();
+                    assert!(false, "Unexpected type for schema: {:#?}", val);
+                },
+            };
+            out.push_str(&format!(
+                "    #[serde(rename = \"{}\")]\n",
+                field_prefix 
+            ));
+            let final_type : String;
+            if let Some(ref wrapper) = wrapped_val
+            {
+                final_type = format!("{}{}",wrapper, new_member_type);
+            } else
+            {
+                final_type = new_member_type;
+            }
+            write_out_field(
+                out,
+                &new_member_name,
+                &final_type,
+                required,
+            );
+            out.push_str("\n");
+            new_member_names.push(new_member_name.clone());
+            new_member_types.push(final_type.clone());
+        }
+    } else {
+        assert!(
+            false,
+            "Strange case, haven't handled this yet: {:#?}",
+            anyof_schema
+        );
+    }
+    (new_member_names,new_member_types)
+
 }
 
 fn gen_inferred_params(
@@ -620,68 +788,16 @@ fn gen_inferred_params(
                             initializers.push(("card".into(), type_.clone(), required));
                             write_out_field(out, &"card".into(), &type_, required);
                         }
-                        Err(TypeError::NoType) => {
-                            //Weird case, found with anyOf so only case we are handling
-                            //at the current moment
-                            if let Some(inner_vec) = member_schema["anyOf"].as_array() {
-                                for (index, val) in inner_vec.iter().enumerate() {
-                                    let new_member_name = format!("card{}", index);
-                                    let new_member_type: String;
-                                    if let Ok(normal_type) = gen_member_variable_string(val) {
-                                        new_member_type = normal_type;
-                                    } else {
-                                        if let Some(title) = val["title"].as_str() {
-                                            new_member_type = title.to_camel_case();
-                                        } else {
-                                            new_member_type = new_member_name.to_camel_case();
-                                        }
-                                        let inferred_object = InferredObject {
-                                            rust_type: new_member_type.clone(),
-                                            schema: val.clone(),
-                                        };
-                                        state
-                                            .generated_objects
-                                            .insert(new_member_type.clone(), inferred_object);
-                                    }
-                                    initializers.push((
-                                        new_member_name.clone(),
-                                        new_member_type.clone(),
-                                        required,
-                                    ));
-                                    out.push_str(&format!(
-                                        "    #[serde(rename = \"{}\")]\n",
-                                        param_name
-                                    ));
-                                    write_out_field(
-                                        out,
-                                        &new_member_name,
-                                        &new_member_type,
-                                        required,
-                                    );
-                                    out.push_str("\n");
-                                }
-                            } else {
-                                assert!(
-                                    false,
-                                    "Strange case, haven't handled this yet: {:#?}",
-                                    member_schema
-                                );
+                        Err(TypeError::AnyOf) => {
+                            println!("member_schema: {:#?}", member_schema);
+                            let (new_member_names, new_member_types) = gen_any_of_fields(out, &member_schema["anyOf"], "card", state, required, None);
+                            for (index, name) in new_member_names.iter().enumerate() {
+                                initializers.push((name.clone(), new_member_types[index].clone(), required));
                             }
                         }
                         Err(TypeError::IsObject) => {
-                            let new_type_name: String;
-                            if let Some(title) = member_schema["title"].as_str() {
-                                new_type_name = title.to_string().to_camel_case();
-                            } else {
-                                new_type_name = format!("{}CardInfo", params.rust_type);
-                            }
-                            let inferred_object = InferredObject {
-                                rust_type: new_type_name.clone(),
-                                schema: param["schema"].clone(),
-                            };
-                            state.generated_objects.insert(new_type_name.clone(), inferred_object);
+                            let new_type_name = gen_object_field(out, &member_schema, "card", &params.rust_type, Some("CardInfo".into()), None, state, required);
                             initializers.push(("card".into(), new_type_name.clone(), required));
-                            write_out_field(out, &"card".into(), &new_type_name, required);
                         }
                         _ => {
                             assert!(false, "Don't recognize this: {:#?}", member_schema);
@@ -1225,9 +1341,11 @@ fn gen_enums(out: &mut String, state: &mut Generated, meta: &Metadata) {
 
 #[derive(Clone, Debug, Copy)]
 enum TypeError {
+    IsList,
     IsObject,
+    IsArray,
     NoType,
-    Unknown,
+    AnyOf
 }
 
 fn gen_member_variable_string(schema: &Json) -> Result<String, TypeError> {
@@ -1237,18 +1355,44 @@ fn gen_member_variable_string(schema: &Json) -> Result<String, TypeError> {
             "integer" => member_type = Ok("i32".into()),
             "string" => member_type = Ok("String".into()),
             "boolean" => member_type = Ok("bool".into()),
-            "array" => {
-                member_type =
-                    Ok(format!("Vec<{}>", gen_member_variable_string(&schema["items"]).unwrap()))
-            }
-            "object" => member_type = Err(TypeError::IsObject),
+            "number" => member_type = Ok("f64".into()),
+            "array" => member_type = Err(TypeError::IsArray), 
+
+                //let inner_type = gen_member_variable_string(&schema["items"]);
+                //let inner_var : String;
+                //match inner_type {
+                //    Ok(var) => inner_var = var,
+                //    _ => panic!("schema: {:#?}", &schema),
+                //}
+                //member_type =
+                //    Ok(format!("Vec<{}>", &inner_var))
+            
+
+            "object" => {
+                if Some("list") == schema["properties"]["object"]["enum"][0].as_str() {
+                    member_type = Err(TypeError::IsList)
+                } else {
+                    member_type = Err(TypeError::IsObject)
+                }
+            },
             _ => {
-                assert!(false, "Do not handle type: {}", type_);
-                member_type = Err(TypeError::Unknown)
+                panic!("Do not handle type: {}, schema: {:#?}", type_, schema);
             }
         }
         member_type
-    } else {
+    } else if let Some(_) = schema["anyOf"].as_array() {
+        Err(TypeError::AnyOf)
+    } else if let Some(reference) = schema["$ref"].as_str()
+    {
+        let (prefix, var_name) = reference.rsplit_once('/').unwrap();
+        if prefix != "#/components/schemas"
+        {
+            panic!("Reference is something weird: {}", reference);
+        }
+
+        Ok(var_name.to_camel_case())
+    }
+    else {
         Err(TypeError::NoType)
     }
 }
@@ -1266,7 +1410,7 @@ fn gen_objects(out: &mut String, state: &mut Generated) {
         let value_obj: InferredObject;
         {
             let (key, value) = generated_objects.iter().next().unwrap();
-            println!("object: {} -- {:#?}", key, value);
+            //println!("object: {} -- {:#?}", key, value);
             key_str = key.clone();
             value_obj = value.clone();
         }
@@ -1337,35 +1481,6 @@ fn gen_objects(out: &mut String, state: &mut Generated) {
         }
         generated_objects.remove(&key_str);
 
-        /*if let Some(array) = schema["anyOf"].as_array() {
-            out.push_str("#[derive(Clone, Debug, Deserialize, Serialize)]\n");
-            out.push_str("#[serde(rename_all = \"snake_case\")]\n");
-            out.push_str(&format!("pub enum {} {{\n", key_str));
-
-            let mut index = 0;
-            for value in array {
-                if let Some(title) = value["title"].as_str() {
-                    out.push_str(&format!("    pub {}(", title.to_camel_case()));
-                } else {
-                    out.push_str(&format!("    pub Alternate{}(", index));
-                }
-                index += 1;
-
-                if let Ok(obj_str) = gen_member_variable_string(&value) {
-                    out.push_str(&format!("{}),\n", obj_str));
-                } else {
-                    let object_name = value["title"].as_str().unwrap();
-                    let rust_obj_name = object_name.to_camel_case();
-
-                    out.push_str(&format!("{}),\n", rust_obj_name));
-                    let obj_desc =
-                        InferredObject { rust_type: rust_obj_name.clone(), schema: value.clone() };
-                    generated_objects.insert(object_name.to_camel_case(), obj_desc);
-                }
-                println!("value: {:#?}", value);
-            }
-            out.push_str("}\n");
-        }*/
     }
 }
 
@@ -1490,28 +1605,43 @@ fn gen_field(
         out.push_str(field_name);
         out.push_str("\")]\n");
     }
-    let rust_type = gen_field_rust_type(
-        state,
-        meta,
-        object,
-        &field_name,
-        &field,
-        required,
-        default,
-        shared_objects,
-    );
-    if !required {
-        if rust_type == "bool" || rust_type == "Metadata" || rust_type.starts_with("List<") {
-            out.push_str("    #[serde(default)]\n");
-        } else if rust_type.starts_with("Option<") {
-            out.push_str("    #[serde(skip_serializing_if = \"Option::is_none\")]\n");
+
+    //This is a hack to handle anyof correctly, need to refactor
+    //all of this in the future
+    match gen_member_variable_string(field) {
+        Err(TypeError::AnyOf) => {
+            gen_any_of_fields(&mut out,
+                             &field["anyOf"],
+                             field_name,
+                             state,
+                             required, None);
         }
-    }
-    out.push_str("    pub ");
-    out.push_str(&field_rename);
-    out.push_str(": ");
-    out.push_str(&rust_type);
-    out.push_str(",\n");
+        _ => {
+            let rust_type = gen_field_rust_type(
+                state,
+                meta,
+                object,
+                &field_name,
+                &field,
+                required,
+                default,
+                shared_objects,
+            );
+            if !required {
+                if rust_type == "bool" || rust_type == "Metadata" || rust_type.starts_with("List<") {
+                    out.push_str("    #[serde(default)]\n");
+                } else if rust_type.starts_with("Option<") {
+                    out.push_str("    #[serde(skip_serializing_if = \"Option::is_none\")]\n");
+                }
+            }
+            out.push_str("    pub ");
+            out.push_str(&field_rename);
+            out.push_str(": ");
+            out.push_str(&rust_type);
+            out.push_str(",\n");
+        }
+    };
+
     out
 }
 
@@ -1602,6 +1732,8 @@ fn gen_field_rust_type(
         Some("object") => {
             if field["properties"]["object"]["enum"][0].as_str() == Some("list") {
                 state.use_params.insert("List");
+                
+
                 let element = &field["properties"]["data"]["items"];
                 let element_field_name = if field_name.ends_with('s') {
                     field_name[0..field_name.len() - 1].into()
@@ -1646,84 +1778,50 @@ fn gen_field_rust_type(
                     }
                 }
                 type_name
-            } else if let Some(any_of) =
+            } else if let Some(_) =
                 field["anyOf"].as_array().or_else(|| field["oneOf"].as_array())
             {
-                if any_of.len() == 1
-                    || (any_of.len() == 2 && any_of[1]["enum"][0].as_str() == Some(""))
-                {
-                    gen_field_rust_type(
-                        state,
-                        meta,
-                        object,
-                        field_name,
-                        &any_of[0],
-                        true,
-                        false,
-                        shared_objects,
-                    )
-                } else if field["x-expansionResources"].is_object() {
-                    let ty_ = gen_field_rust_type(
-                        state,
-                        meta,
-                        object,
-                        field_name,
-                        &json!({
-                            "oneOf": Json::Array(field["x-expansionResources"]["oneOf"].as_array().unwrap()
-                            .iter()
-                            .filter(|v| !v["$ref"].as_str().unwrap().starts_with("#/components/schemas/deleted_"))
-                            .cloned()
-                            .collect())
-                        }),
-                        true,
-                        false,
-                        shared_objects,
-                    );
-                    state.use_params.insert("Expandable");
-                    format!("Expandable<{}>", ty_)
-                } else if any_of[0]["title"].as_str() == Some("range_query_specs") {
-                    state.use_params.insert("RangeQuery");
-                    state.use_params.insert("Timestamp");
-                    "RangeQuery<Timestamp>".into()
-                } else {
-                    //println!("object: {}, field_name: {}", object, field_name);
-                    let mut union_addition = field_name.to_owned();
-                    union_addition.push_str("_union");
-                    let union_schema = meta.schema_field(object, &union_addition);
-                    let union_name = meta.schema_to_rust_type(&union_schema);
-                    //println!("union_schema: {}, union_name: {}", union_schema, union_name);
-                    let union_ = InferredUnion {
-                        field: field_name.into(),
-                        schema_variants: any_of
-                            .iter()
-                            .map(|x| {
-                                let schema_name = x["$ref"]
-                                    .as_str()
-                                    .expect(&format!(
-                                        "invalid union for `{}.{}`:  {:#?}",
-                                        object, field_name, field
-                                    ))
-                                    .trim_start_matches("#/components/schemas/");
-                                let type_name = meta.schema_to_rust_type(schema_name);
-                                if meta.objects.contains(schema_name)
-                                    || meta
-                                        .dependents
-                                        .get(schema_name)
-                                        .map(|x| x.len())
-                                        .unwrap_or(0)
-                                        > 1
-                                {
-                                    state.use_resources.insert(type_name);
-                                } else if !state.generated_schemas.contains_key(schema_name) {
-                                    state.generated_schemas.insert(schema_name.into(), false);
-                                }
-                                schema_name.into()
-                            })
-                            .collect(),
-                    };
-                    state.inferred_unions.insert(union_name.clone(), union_);
-                    union_name
-                }
+                panic!("Shouldn't be able to get here anymore: {:#?}", field);
+                //if any_of.len() == 1
+                //    || (any_of.len() == 2 && any_of[1]["enum"][0].as_str() == Some(""))
+                //{
+                //    gen_field_rust_type(
+                //        state,
+                //        meta,
+                //        object,
+                //        field_name,
+                //        &any_of[0],
+                //        true,
+                //        false,
+                //        shared_objects,
+                //    )
+                //} else if field["x-expansionResources"].is_object() {
+                //    let ty_ = gen_field_rust_type(
+                //        state,
+                //        meta,
+                //        object,
+                //        field_name,
+                //        &json!({
+                //            "oneOf": Json::Array(field["x-expansionResources"]["oneOf"].as_array().unwrap()
+                //            .iter()
+                //            .filter(|v| !v["$ref"].as_str().unwrap().starts_with("#/components/schemas/deleted_"))
+                //            .cloned()
+                //            .collect())
+                //        }),
+                //        true,
+                //        false,
+                //        shared_objects,
+                //    );
+                //    state.use_params.insert("Expandable");
+                //    format!("Expandable<{}>", ty_)
+                //} else if any_of[0]["title"].as_str() == Some("range_query_specs") {
+                //    state.use_params.insert("RangeQuery");
+                //    state.use_params.insert("Timestamp");
+                //    "RangeQuery<Timestamp>".into()
+                //} else {
+                //    k
+
+                //}
             } else {
                 panic!("unhandled field type for `{}.{}`: {}\n", object, field_name, field)
             }
