@@ -131,9 +131,14 @@ impl Client {
     }
 
     /// Make a `POST` http request with just a path
-    pub fn post<T: DeserializeOwned + Send + 'static>(&self, path: &str) -> Response<T> {
+    pub fn post<T: DeserializeOwned + Send + 'static>(
+        &self,
+        path: &str,
+        idem_key: Option<&str>,
+    ) -> Response<T> {
         let url = self.url(path);
-        let req = surf::Request::builder(surf::http::Method::Post, url).build();
+        let mut req = surf::Request::builder(surf::http::Method::Post, url).build();
+        self.set_idempotent_key(&mut req, idem_key);
         send(&self.client, self.set_headers(req))
     }
 
@@ -142,6 +147,7 @@ impl Client {
         &self,
         path: &str,
         form: F,
+        idem_key: Option<&str>,
     ) -> Response<T> {
         let url = self.url(path);
         let mut req = surf::Request::builder(surf::http::Method::Post, url)
@@ -152,6 +158,7 @@ impl Client {
                 Ok(body) => Body::from_string(body),
             })
             .build();
+        self.set_idempotent_key(&mut req, idem_key);
         req.set_header("content-type", "application/x-www-form-urlencoded");
         send(&self.client, self.set_headers(req))
     }
@@ -199,6 +206,12 @@ impl Client {
         };
 
         req
+    }
+
+    fn set_idempotent_key(&self, req: &mut surf::Request, idem_key: Option<&str>) -> () {
+        if let Some(key) = idem_key {
+            req.set_header("idempotency-key", key);
+        }
     }
 }
 

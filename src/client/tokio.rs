@@ -182,7 +182,11 @@ impl Client {
     }
 
     /// Make a `POST` http request with just a path
-    pub fn post<T: DeserializeOwned + Send + 'static>(&self, path: &str) -> Response<T> {
+    pub fn post<T: DeserializeOwned + Send + 'static>(
+        &self,
+        path: &str,
+        idem_key: Option<&str>,
+    ) -> Response<T> {
         let url = self.url(path);
         let mut req = Request::builder()
             .method("POST")
@@ -190,6 +194,7 @@ impl Client {
             .body(Body::empty())
             .expect("request is correct");
         *req.headers_mut() = self.headers();
+        self.set_idempotent_key(req.headers_mut(), idem_key);
         send(&self.client, req)
     }
 
@@ -198,6 +203,7 @@ impl Client {
         &self,
         path: &str,
         form: F,
+        idem_key: Option<&str>,
     ) -> Response<T> {
         let url = self.url(path);
         let mut req = Request::builder()
@@ -215,6 +221,7 @@ impl Client {
             HeaderName::from_static("content-type"),
             HeaderValue::from_static("application/x-www-form-urlencoded"),
         );
+        self.set_idempotent_key(req.headers_mut(), idem_key);
         send(&self.client, req)
     }
 
@@ -278,6 +285,15 @@ impl Client {
             );
         };
         headers
+    }
+
+    fn set_idempotent_key(&self, headers: &mut HeaderMap, idem_key: Option<&str>) {
+        if let Some(key) = idem_key {
+            headers.insert(
+                HeaderName::from_static("idempotency-key"),
+                HeaderValue::from_str(key).expect("idem key is a valid header value"),
+            );
+        }
     }
 }
 

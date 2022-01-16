@@ -105,8 +105,12 @@ impl Client {
     }
 
     /// Make a `POST` http request with just a path
-    pub fn post<T: DeserializeOwned + Send + 'static>(&self, path: &str) -> Response<T> {
-        self.send_blocking(self.inner.post(path))
+    pub fn post<T: DeserializeOwned + Send + 'static>(
+        &self,
+        path: &str,
+        idem_key: Option<&str>,
+    ) -> Response<T> {
+        self.send_blocking(self.inner.post(path, idem_key))
     }
 
     /// Make a `POST` http request with urlencoded body
@@ -114,8 +118,9 @@ impl Client {
         &self,
         path: &str,
         form: F,
+        idem_key: Option<&str>,
     ) -> Response<T> {
-        self.send_blocking(self.inner.post_form(path, form))
+        self.send_blocking(self.inner.post_form(path, form, idem_key))
     }
 
     fn send_blocking<T: DeserializeOwned + Send + 'static>(
