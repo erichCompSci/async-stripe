@@ -54,6 +54,7 @@ pub mod payment {
 #[cfg(feature = "checkout")]
 pub mod checkout {
     pub mod checkout_session;
+    pub mod payment_link;
     pub mod item;
 }
 
