@@ -2,8 +2,8 @@ use serde_derive::{Deserialize, Serialize};
 
 use crate::config::{Client, Response};
 use crate::ids::{BankAccountId, CardId, CustomerId, PaymentSourceId};
-use crate::params::Deleted;
-use crate::resources::{BankAccount, Customer, PaymentSource, PaymentSourceParams, Source};
+use crate::params::{Deleted, List};
+use crate::resources::{BankAccount, Customer, PaymentSource, PaymentSourceParams, Source, PaymentMethod};
 
 impl Customer {
     /// Attaches a source to a customer, does not change default Source for the Customer
@@ -58,6 +58,17 @@ impl Customer {
             params,
             idem_key,
         )
+    }
+
+
+    ///Returns a list of PaymentMethods for a given Customer
+    ///
+    ///For more details see <https://stripe.com/docs/api/payment_methods/customer_list>
+    pub fn retrieve_payment_methods(
+        client: &Client,
+        customer_id: &CustomerId,
+    ) -> Response<List<PaymentMethod>> {
+        client.get(&format!("/customers/{}/payment_methods", customer_id))
     }
 }
 
