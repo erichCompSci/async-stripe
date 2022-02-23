@@ -261,7 +261,8 @@ impl Client {
             headers.insert(
                 HeaderName::from_static("idempotency-key"),
                 HeaderValue::from_str(idempotency_key.as_str())
-                    .expect("idempotency key is valid header value"));
+                    .expect("idempotency key is valid header value"),
+            );
         }
         if let Some(app_info) = &self.app_info {
             let user_agent_app_info = format!("{} {}", USER_AGENT, format_app_info(app_info));

@@ -76,7 +76,6 @@ impl Client {
         client
     }
 
-
     pub fn set_app_info(&mut self, name: String, version: Option<String>, url: Option<String>) {
         self.app_info = Some(AppInfo { name, url, version });
     }
