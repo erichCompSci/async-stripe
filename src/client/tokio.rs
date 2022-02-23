@@ -98,6 +98,15 @@ impl Client {
         client
     }
 
+    /// Clones a new client with idempotency key headers.
+    ///
+    /// For short living idempotency keys, they only matter on push requests
+    pub fn with_idempotency_key(&self, idempotency_key: String) -> Client {
+        let mut client = self.clone();
+        client.headers.idempotency_key = Some(idempotency_key);
+        client
+    }
+
     pub fn set_app_info(&mut self, name: String, version: Option<String>, url: Option<String>) {
         self.app_info = Some(AppInfo { name, url, version });
     }
@@ -247,6 +256,12 @@ impl Client {
                 HeaderValue::from_str(stripe_version.as_str())
                     .expect("stripe version is valid header value"),
             );
+        }
+        if let Some(idempotency_key) = &self.headers.idempotency_key {
+            headers.insert(
+                HeaderName::from_static("idempotency-key"),
+                HeaderValue::from_str(idempotency_key.as_str())
+                    .expect("idempotency key is valid header value"));
         }
         if let Some(app_info) = &self.app_info {
             let user_agent_app_info = format!("{} {}", USER_AGENT, format_app_info(app_info));

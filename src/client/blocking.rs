@@ -55,6 +55,15 @@ impl Client {
         Client { inner: self.inner.with_headers(headers), runtime: self.runtime.clone() }
     }
 
+    /// Clones a new client with idempotency key headers.
+    ///
+    /// For short living idempotency keys, they only matter on push requests
+    pub fn with_idempotency_key(&self, idempotency_key: String) -> Client {
+        let mut client = self.clone();
+        client.inner = self.inner.with_idempotency_key(idempotency_key);
+        client
+    }
+
     pub fn set_app_info(&mut self, name: String, version: Option<String>, url: Option<String>) {
         self.inner.set_app_info(name, version, url);
     }

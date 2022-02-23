@@ -67,6 +67,16 @@ impl Client {
         client
     }
 
+    /// Clones a new client with idempotency key headers.
+    ///
+    /// For short living idempotency keys, they only matter on push requests
+    pub fn with_idempotency_key(&self, idempotency_key: String) -> Client {
+        let mut client = self.clone();
+        client.headers.idempotency_key = Some(idempotency_key);
+        client
+    }
+
+
     pub fn set_app_info(&mut self, name: String, version: Option<String>, url: Option<String>) {
         self.app_info = Some(AppInfo { name, url, version });
     }
@@ -174,6 +184,9 @@ impl Client {
         }
         if let Some(stripe_version) = &self.headers.stripe_version {
             req.set_header("stripe-version", stripe_version.as_str());
+        }
+        if let Some(idempotency_key) = &self.headers.idempotency_key {
+            req.set_header("idempotency-key", idempotency_key.as_str());
         }
         const CRATE_VERSION: &str = env!("CARGO_PKG_VERSION");
         let user_agent: String = format!("Stripe/v3 RustBindings/{}", CRATE_VERSION);
