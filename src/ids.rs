@@ -197,7 +197,8 @@ macro_rules! def_id {
                 )* {
 
                     // N.B. For debugging
-                    eprintln!("bad id is: {} (expected: {:?})", s, $prefix);
+                    eprintln!("bad id is: {} (expected: {:?}) for {}", s, $prefix, stringify!($struct_name));
+                    //panic!("Crash so we can see");
 
                     Err(ParseIdError {
                         typename: stringify!($struct_name),
@@ -458,7 +459,7 @@ def_id!(AlipayAccountId, "aliacc_");
 def_id!(ApplicationFeeId, "fee_");
 def_id!(ApplicationFeeRefundId, "fr_");
 def_id!(BalanceTransactionId, "txn_");
-def_id!(BankAccountId, "ba_");
+def_id!(BankAccountId, "ba_" | "card_");
 def_id!(BillingPortalSessionId, "bps_");
 def_id!(BillingPortalConfigurationId, "bpc_");
 def_id!(BankTokenId, "btok_");
