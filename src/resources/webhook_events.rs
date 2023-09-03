@@ -145,6 +145,8 @@ pub enum EventType {
     PaymentIntentSucceeded,
     #[serde(rename = "payment_method.attached")]
     PaymentMethodAttached,
+    #[serde(rename = "payment_method.detached")]
+    PaymentMethodDetached,
     #[serde(rename = "payout.canceled")]
     PayoutCanceled,
     #[serde(rename = "payout.created")]
