@@ -217,8 +217,21 @@ pub struct WebhookEvent {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct EventData {
     pub object: EventObject,
-    // previous_attributes: ...
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_attributes: Option<PreviousAttributes>,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PaymentMethodDetachedPrevAttributes {
+    pub customer : String
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "previous_attributes", rename_all = "snake_case")]
+pub enum PreviousAttributes {
+    PaymentMethodDetached(PaymentMethodDetachedPrevAttributes),
+}
+
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "object", rename_all = "snake_case")]
